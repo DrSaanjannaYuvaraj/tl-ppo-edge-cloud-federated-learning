@@ -1,8 +1,0 @@
-numpy
-pandas
-torch
-fastapi
-uvicorn
-matplotlib
-scikit-learn
-requests
