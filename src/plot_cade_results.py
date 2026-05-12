@@ -71,8 +71,11 @@ def load_results(results_dir: str) -> pd.DataFrame:
     # numeric conversions
     numeric_cols = [
         "round", "global_acc", "reward", "latency_s", "seed",
-        "comm_bytes", "uplink_bytes", "downlink_bytes",
-        "model_bytes", "telemetry_bytes"
+        "controller_delay_s", "federation_size",
+        "comm_bytes", "controller_comm_bytes",
+        "telemetry_bytes", "decision_bytes",
+        "uplink_bytes", "downlink_bytes",
+        "model_bytes"
     ]
     for c in numeric_cols:
         if c in df.columns:
@@ -487,6 +490,55 @@ def write_summary_info(
     print(f"[OK] {info_path}")
 
 
+
+def build_controller_overhead_table(df: pd.DataFrame, out_csv: str) -> pd.DataFrame:
+    if "controller_delay_s" not in df.columns:
+        print("[WARN] controller_delay_s not found; skipping overhead table")
+        return pd.DataFrame()
+
+    if "federation_size" not in df.columns:
+        print("[WARN] federation_size not found; skipping overhead table")
+        return pd.DataFrame()
+
+    rows = []
+    for size in sorted(df["federation_size"].dropna().unique()):
+        d = df[df["federation_size"] == size].copy()
+        rows.append({
+            "Federation Size": f"{int(size)} Clients",
+            "Controller Delay (s)": f"{d['controller_delay_s'].mean():.4f} ± {d['controller_delay_s'].std(ddof=1):.4f}",
+            "Controller Delay Mean": d["controller_delay_s"].mean(),
+            "Controller Delay Std": d["controller_delay_s"].std(ddof=1),
+        })
+
+    out = pd.DataFrame(rows)
+    out.to_csv(out_csv, index=False)
+    print(f"[OK] {out_csv}")
+    return out
+
+
+def controller_overhead_plot(df: pd.DataFrame, out_path: str):
+    if "controller_delay_s" not in df.columns or "federation_size" not in df.columns:
+        print("[WARN] Missing controller_delay_s or federation_size; skipping controller overhead figure")
+        return
+
+    d = df.groupby("federation_size")["controller_delay_s"].agg(["mean", "std"]).reset_index()
+
+    plt.figure(figsize=(7, 5))
+    plt.bar(
+        d["federation_size"].astype(str),
+        d["mean"],
+        yerr=d["std"].fillna(0.0),
+        capsize=4
+    )
+    plt.xlabel("Federation Size")
+    plt.ylabel("Controller Delay (s)")
+    plt.title("Controller coordination overhead across federation sizes")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300)
+    plt.close()
+    print(f"[OK] {out_path}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results_dir", required=True)
@@ -522,8 +574,8 @@ def main():
         plot_df,
         metric="reward",
         ylabel="Reward",
-        title="Evolution of reinforcement learning reward",
-        out_path=os.path.join(args.outdir, "Figure4_reward_evolution.png"),
+        title="Reward convergence across federated learning rounds",
+        out_path=os.path.join(args.outdir, "Figure5_reward_convergence.png"),
     )
 
     curve_plot(
@@ -532,6 +584,16 @@ def main():
         ylabel="Latency (s)",
         title="Comparison of end-to-end training latency under different offloading strategies",
         out_path=os.path.join(args.outdir, "Figure5_latency_comparison.png"),
+    )
+
+    controller_overhead_plot(
+        df,
+        out_path=os.path.join(args.outdir, "Figure6_controller_overhead.png"),
+    )
+
+    build_controller_overhead_table(
+        df,
+        out_csv=os.path.join(args.outdir, "Table_controller_overhead.csv"),
     )
 
     if "comm_bytes_total" in plot_df.columns:
