@@ -535,8 +535,15 @@ def run_one_strategy(
     prev_acc, prev_latency, prev_offload_ratio = 0.0, 0.0, 0.0
 
     for rnd in range(1, args.rounds + 1):
+        controller_t0 = time.time()
+
         telemetry_payloads = [c.telemetry_latest() for c in clients]
-        state, raw_rows = state_builder.build_state(telemetry_payloads, prev_acc, prev_latency, prev_offload_ratio)
+        state, raw_rows = state_builder.build_state(
+            telemetry_payloads,
+            prev_acc,
+            prev_latency,
+            prev_offload_ratio
+        )
 
         if strategy_name == "fedavg":
             action = strategy_fedavg(num_clients)
@@ -550,6 +557,15 @@ def run_one_strategy(
             action, logprob, value = rl_agent.act(state)
         else:
             raise ValueError(f"Unsupported IC2E strategy: {strategy_name}")
+
+        controller_delay_s = time.time() - controller_t0
+
+        # Controller coordination overhead:
+        # telemetry upload + action decision distribution.
+        num_clients_active = len(clients)
+        telemetry_bytes = num_clients_active * len(feature_cols) * 8
+        decision_bytes = num_clients_active * 8
+        controller_comm_bytes = telemetry_bytes + decision_bytes
 
         round_t0 = time.time()
         local_weights = []
@@ -642,6 +658,12 @@ def run_one_strategy(
             "reward": reward,
             "latency_s": round_latency,
             "offload_ratio": offload_ratio,
+            "controller_delay_s": controller_delay_s,
+            "federation_size": num_clients_active,
+            "telemetry_bytes": telemetry_bytes,
+            "decision_bytes": decision_bytes,
+            "controller_comm_bytes": controller_comm_bytes,
+            "comm_bytes": controller_comm_bytes,
             "action": action.tolist(),
             "exec_modes": exec_modes,
             "client_train_time_mean": float(np.mean(client_train_times)),
